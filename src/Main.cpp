@@ -315,7 +315,7 @@ namespace StringCvt
 
     size_t EstimateWideToCodepage(unsigned codepage, wchar_t const* source, size_t sourceSize)
     {
-        return static_cast<size_t>(::WideCharToMultiByte(codepage, 0, source, checked_cast<int>(wcslen_max(source, sourceSize)), nullptr, 0, "?", NULL) + 1);
+        return static_cast<size_t>(::WideCharToMultiByte(codepage, 0, source, checked_cast<int>(sourceSize), nullptr, 0, "?", NULL) + 1);
     }
 
     class AnsiFromWide {
@@ -324,11 +324,15 @@ namespace StringCvt
         AnsiFromWide(AnsiFromWide const& source) : buffer(source.buffer) { }
         AnsiFromWide(wchar_t const* source, size_t sourceSize = ~0)
         {
+            if (sourceSize == ~0)
+                sourceSize = wcslen(source);
             Convert(source, sourceSize);
         }
 
         void Convert(wchar_t const* source, size_t sourceSize = ~0)
         {
+            if (sourceSize == ~0)
+                sourceSize = wcslen(source);
             size_t size = EstimateWideToCodepage(CP_ACP, source, sourceSize);
             buffer.resize(size);
             ConvertWideToCodepage(CP_ACP, buffer.data(), size, source, sourceSize);
