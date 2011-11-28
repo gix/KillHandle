@@ -7,6 +7,7 @@
 #include <vector>
 #include <Shlwapi.h>
 #include <strsafe.h>
+#include <process.h>
 
 #include <memory>
 #include <array>
@@ -475,6 +476,12 @@ Win32Exception::Win32Exception(DWORD error, std::wstring const& message)
     FormatError(error, NULL, &message, &this->message);
 }
 
+class NtQueryObjectHangException : public virtual std::exception
+{
+public:
+    virtual char const* what() const { return "Hang in NtQueryObject detected."; }
+};
+
 std::wstring QueryHandleType(HANDLE handle)
 {
     malloc_ptr<OBJECT_TYPE_INFORMATION> objectTypeInfo(0x1000, true);
@@ -484,6 +491,7 @@ std::wstring QueryHandleType(HANDLE handle)
 
     return std::wstring(objectTypeInfo->Name.Buffer, checked_cast<unsigned int>(objectTypeInfo->Name.Length / 2));
 }
+
 
 std::wstring QueryHandleName(HANDLE handle)
 {
@@ -520,6 +528,92 @@ std::wstring QueryHandleName(HANDLE handle)
     return std::wstring(objectName.Buffer, checked_cast<unsigned int>(objectName.Length / 2));
 }
 
+class SafeQueryContext
+{
+public:
+    unsigned int ThreadId;
+    HANDLE ThreadHandle;
+    HANDLE StartEvent;
+    HANDLE FinishEvent;
+    HANDLE ObjectHandle;
+    std::wstring Buffer;
+    std::string Error;
+
+    SafeQueryContext()
+        : ThreadHandle(NULL),
+          StartEvent(NULL),
+          FinishEvent(NULL),
+          ObjectHandle(NULL),
+          Buffer(L"")
+    {
+    }
+
+    std::wstring QueryOrThrow(HANDLE handle)
+    {
+        EnsureInit();
+
+        // Set some global variables the query thread will read.
+        Buffer = L"";
+        Error = "";
+        ObjectHandle = handle;
+
+        SetEvent(StartEvent);
+
+        if (::WaitForSingleObject(FinishEvent, 100) == WAIT_TIMEOUT) {
+            // The thread's taking too long. It may be hanging on a named pipe handle.
+            TerminateThread(ThreadHandle, 1);
+            CloseHandle(ThreadHandle);
+            ThreadHandle = NULL;
+            throw NtQueryObjectHangException();
+        }
+
+        if (Error.size() > 0)
+            throw std::exception(Error.c_str());
+
+        return Buffer;
+    }
+
+private:
+    static unsigned int __stdcall ThreadProc(void* arguments)
+    {
+        SafeQueryContext* context = reinterpret_cast<SafeQueryContext*>(arguments);
+
+        // This thread never exits unless it is hanging. If it is, it is killed
+        // and restarted the next time it is needed.
+        // Otherwise, it remains and gets re-used the next time it is needed.
+        while (WaitForSingleObject(context->StartEvent, INFINITE) == WAIT_OBJECT_0) {
+            try {
+                context->Buffer = QueryHandleName(context->ObjectHandle);
+            } catch (std::exception const& ex) {
+                context->Error = ex.what();
+            }
+
+            SetEvent(context->FinishEvent);
+        }
+
+        _endthreadex(0);
+        return 0;
+    }
+
+    void EnsureInit()
+    {
+        if (!ThreadHandle)
+            ThreadHandle = (HANDLE)_beginthreadex(NULL, 0, ThreadProc, reinterpret_cast<void*>(this), 0, &ThreadId);
+
+        if (!StartEvent) {
+            StartEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+            FinishEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+        }
+    }
+};
+
+static SafeQueryContext StaticSafeQueryContext;
+
+std::wstring SafeQueryHandleName(HANDLE handle)
+{
+    return StaticSafeQueryContext.QueryOrThrow(handle);
+}
+
 // Translate path with device name to drive letters.
 std::wstring NativePathToDosPath(std::wstring nativePath)
 {
@@ -528,7 +622,7 @@ std::wstring NativePathToDosPath(std::wstring nativePath)
     temp[0] = '\0';
 
     if (!GetLogicalDriveStringsW(BufferSize - 1, temp))
-        throw std::exception();
+        throw std::exception("GetLogicalDriveStringsW failed.");
 
     wchar_t name[MAX_PATH];
     wchar_t drive[3] = L" :";
@@ -659,30 +753,34 @@ HandleList FindHandles(DWORD processId, HANDLE processHandle, std::wstring fileN
         SYSTEM_HANDLE_TABLE_ENTRY_INFO handle = handleInfo->Handles[i];
         HANDLE dupHandle = NULL;
 
-        if (handle.ProcessId != processId)
-            continue;
-        if (handle.GrantedAccess == 0x0012019F)
-            continue;
+        try {
+            if (handle.ProcessId != processId)
+                continue;
+            if (handle.GrantedAccess == 0x0012019F)
+                continue;
 
-        // Duplicate the handle so we can query it.
-        status = NtDuplicateObject(
-            processHandle, reinterpret_cast<HANDLE>(handle.Handle), GetCurrentProcess(),
-            &dupHandle, 0, 0, 0);
-        if (!NT_SUCCESS(status))
-            continue;
+            // Duplicate the handle so we can query it.
+            status = NtDuplicateObject(
+                processHandle, reinterpret_cast<HANDLE>(handle.Handle), GetCurrentProcess(),
+                &dupHandle, 0, 0, 0);
+            if (!NT_SUCCESS(status))
+                continue;
 
-        handle_ptr h(dupHandle);
+            handle_ptr h(dupHandle);
 
-        std::wstring type = QueryHandleType(h);
-        if (type.compare(L"File") != 0)
-            continue;
+            std::wstring type = QueryHandleType(h);
+            if (type.compare(L"File") != 0)
+                continue;
 
-        std::wstring name = QueryHandleName(h);
-        if (!EqualsI(name, fileName))
-            continue;
+            std::wstring name = SafeQueryHandleName(h);
+            if (!EqualsI(name, fileName))
+                continue;
 
-        handles.push_back(
-            NamedHandle(NativePathToDosPath(name), reinterpret_cast<HANDLE>(handle.Handle)));
+            handles.push_back(
+                NamedHandle(NativePathToDosPath(name), reinterpret_cast<HANDLE>(handle.Handle)));
+        } catch (std::exception const& ex) {
+            fprintf(stderr, "KillHandle: Skipping 0x%08IX: %s\n", handle.Handle, ex.what());
+        }
     }
 
     return handles;
@@ -783,10 +881,8 @@ int wmain(int argc, wchar_t* argv[])
             [&](NamedHandle& handle) { KillHandle(processHandle.get(), handle); });
     } catch (NtException const& ex) {
         fprintf(stderr, "KillHandle: NT-call failed: %s\n", ex.what());
-        return 1;
     } catch (std::exception const& ex) {
         fprintf(stderr, "KillHandle: Caught exception: %s\n", ex.what());
-        return 1;
     }
 
     return 0;
