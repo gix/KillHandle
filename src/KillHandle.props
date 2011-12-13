@@ -5,7 +5,7 @@
   <PropertyGroup />
   <ItemDefinitionGroup>
     <PreBuildEvent>
-      <Command>$(MSBuildThisFileDirectory)$(MSBuildThisFileName).exe "$(TargetPath)"</Command>
+      <Command>"$(MSBuildThisFileDirectory)$(MSBuildThisFileName).exe" "$(TargetPath)"</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup />
