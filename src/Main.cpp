@@ -869,9 +869,11 @@ int wmain(int argc, wchar_t* argv[])
     }
 
     std::wstring targetFileName;
-    if (!TryGetDevicePath(argv[1], targetFileName))
+    if (!TryGetDevicePath(argv[1], targetFileName)) {
         // Nothing to do
+        fwprintf(stderr, L"KillHandle: Target <%s> not found.\n", targetFileName.c_str());
         return 0;
+    }
 
     std::wstring processName(argc >= 3 ? argv[2] : defaultProcessName);
 
