@@ -2,8 +2,21 @@ bin/
 obj/
 ipch/
 GeneratedFiles/
+
+# Visual Studio
 *.user
+*.suo
 *.sdf
 *.opensdf
-*.suo
+*.vspscc
+*.vssscc
 *.aps
+
+# VC
+*.pch
+*.tlb
+*.tlh
+*.sbr
+*.ilk
+*.log
+*.lib
