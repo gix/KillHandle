@@ -843,8 +843,7 @@ int wmain(int argc, wchar_t* argv[])
     if (argc < 2) {
         fwprintf(
             stderr,
-            L"KillHandle <file-path> [<process-name = \"%s\">]",
-            argv[0],
+            L"KillHandle <file-path> [<process-name = \"%s\">]\n",
             defaultProcessName.c_str());
         return 1;
     }
