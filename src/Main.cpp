@@ -30,6 +30,7 @@
 #define STATUS_INFO_LENGTH_MISMATCH 0xc0000004
 
 #define SystemHandleInformation 16
+#define SystemExtendedHandleInformation 64
 #define ObjectBasicInformation 0
 #define ObjectNameInformation 1
 #define ObjectTypeInformation 2
@@ -69,7 +70,7 @@ typedef struct _SYSTEM_HANDLE_TABLE_ENTRY_INFO
     ULONG ProcessId;
     BYTE ObjectTypeNumber;
     BYTE Flags;
-    USHORT Handle;
+    USHORT HandleValue;
     PVOID Object;
     ACCESS_MASK GrantedAccess;
 } SYSTEM_HANDLE_TABLE_ENTRY_INFO, *PSYSTEM_HANDLE_TABLE_ENTRY_INFO;
@@ -79,6 +80,25 @@ typedef struct _SYSTEM_HANDLE_INFORMATION
     ULONG HandleCount;
     SYSTEM_HANDLE_TABLE_ENTRY_INFO Handles[1];
 } SYSTEM_HANDLE_INFORMATION, *PSYSTEM_HANDLE_INFORMATION;
+
+typedef struct _SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX
+{
+    PVOID Object;
+    ULONG ProcessId;
+    HANDLE HandleValue;
+    ULONG GrantedAccess;
+    USHORT CreatorBackTraceIndex;
+    USHORT ObjectTypeIndex;
+    ULONG HandleAttributes;
+    ULONG Reserved;
+} SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX, *PSYSTEM_HANDLE_TABLE_ENTRY_INFO_EX;
+
+typedef struct _SYSTEM_HANDLE_INFORMATION_EX
+{
+    ULONG_PTR HandleCount;
+    ULONG_PTR Reserved;
+    SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX Handles[1];
+} SYSTEM_HANDLE_INFORMATION_EX, *PSYSTEM_HANDLE_INFORMATION_EX;
 
 typedef enum _POOL_TYPE
 {
@@ -735,10 +755,10 @@ HandleList FindHandles(DWORD processId, HANDLE processHandle, std::wstring fileN
     HandleList handles;
 
     ULONG handleInfoSize = 0x10000;
-    malloc_ptr<SYSTEM_HANDLE_INFORMATION> handleInfo(handleInfoSize, true);
+    malloc_ptr<SYSTEM_HANDLE_INFORMATION_EX> handleInfo(handleInfoSize, true);
 
     while ((status = NtQuerySystemInformation(
-        SystemHandleInformation,
+        SystemExtendedHandleInformation,
         handleInfo.get(),
         handleInfoSize,
         NULL
@@ -750,7 +770,7 @@ HandleList FindHandles(DWORD processId, HANDLE processHandle, std::wstring fileN
         throw NtException(status, L"NtQuerySystemInformation failed.");
 
     for (ULONG i = 0; i < handleInfo->HandleCount; ++i) {
-        SYSTEM_HANDLE_TABLE_ENTRY_INFO handle = handleInfo->Handles[i];
+        SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX handle = handleInfo->Handles[i];
         HANDLE dupHandle = NULL;
 
         try {
@@ -761,7 +781,7 @@ HandleList FindHandles(DWORD processId, HANDLE processHandle, std::wstring fileN
 
             // Duplicate the handle so we can query it.
             status = NtDuplicateObject(
-                processHandle, reinterpret_cast<HANDLE>(handle.Handle), GetCurrentProcess(),
+                processHandle, reinterpret_cast<HANDLE>(handle.HandleValue), GetCurrentProcess(),
                 &dupHandle, 0, 0, 0);
             if (!NT_SUCCESS(status))
                 continue;
@@ -777,9 +797,9 @@ HandleList FindHandles(DWORD processId, HANDLE processHandle, std::wstring fileN
                 continue;
 
             handles.push_back(
-                NamedHandle(NativePathToDosPath(name), reinterpret_cast<HANDLE>(handle.Handle)));
+                NamedHandle(NativePathToDosPath(name), reinterpret_cast<HANDLE>(handle.HandleValue)));
         } catch (std::exception const& ex) {
-            fprintf(stderr, "KillHandle: Skipping 0x%08IX: %s\n", handle.Handle, ex.what());
+            fprintf(stderr, "KillHandle: Skipping 0x%08IX: %s\n", handle.HandleValue, ex.what());
         }
     }
 
