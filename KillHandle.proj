@@ -1,0 +1,77 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Release" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\MSBuildCommunityTasks\MSBuild.Community.Tasks.Targets"/>
+
+  <PropertyGroup>
+    <Version>0.0.0.0</Version>
+    <ProjectName>$(MSBuildProjectName)</ProjectName>
+    <PackageName>$(ProjectName)-$(Version)</PackageName>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">Win32</Platform>
+    <BuildDir Condition=" '$(BuildDir)' == '' ">$(MSBuildProjectDirectory)\Build\</BuildDir>
+    <BinDir>$(BuildDir)KillHandle-$(Version)\</BinDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Binaries Include="src\bin\$(Platform)\$(Configuration)\$(ProjectName).exe"/>
+    <Resources Include="src\$(ProjectName).props"/>
+    <Resources Include="ReadMe.txt"/>
+  </ItemGroup>
+
+  <Target Name="UpdateVersion">
+    <PropertyGroup>
+      <_VersionRc>$([System.Text.RegularExpressions.Regex]::Replace($(Version),"\.",","))</_VersionRc>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <_VersionInfoLine Include="#define KH_FILE_VERSION        $(_VersionRc)"/>
+      <_VersionInfoLine Include="#define KH_PRODUCT_VERSION     $(_VersionRc)"/>
+      <_VersionInfoLine Include="#define KH_FILE_VERSION_STR    &quot;$(Version)&quot;"/>
+      <_VersionInfoLine Include="#define KH_PRODUCT_VERSION_STR &quot;$(Version)&quot;"/>
+    </ItemGroup>
+
+    <WriteLinesToFile
+      File="src\VersionInfo.h"
+      Overwrite="true"
+      Lines="@(_VersionInfoLine)"/>
+  </Target>
+
+  <Target Name="Clean">
+    <MSBuild
+        Projects="src\$(ProjectName).vcxproj"
+        Targets="Clean"
+        Properties="Configuration=$(Configuration);Platform=$(Platform)"
+        ContinueOnError="False"/>
+    <RemoveDir Directories="$(BuildDir)"/>
+  </Target>
+
+  <Target Name="Build">
+    <MSBuild
+        Projects="src\$(ProjectName).vcxproj"
+        Targets="Build"
+        Properties="Configuration=$(Configuration);Platform=$(Platform)"
+        ContinueOnError="False"/>
+  </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build;"/>
+
+  <Target Name="Copy" DependsOnTargets="Build">
+    <MakeDir Directories="$(BuildDir)"/>
+    <Copy SourceFiles="@(Binaries)" DestinationFolder="$(BinDir)"/>
+    <Copy SourceFiles="@(Resources)" DestinationFolder="$(BinDir)"/>
+  </Target>
+
+  <Target Name="Distrib" DependsOnTargets="Clean;Build;Copy">
+    <!-- Archive-->
+    <CreateItem Include="$(BinDir)\*.*">
+      <Output ItemName="_PackageFiles" TaskParameter="Include"/>
+    </CreateItem>
+    <Zip
+        Files="@(_PackageFiles)"
+        ZipFileName="$(BuildDir)\$(PackageName).zip"
+        Flatten="true"
+        WorkingDirectory="$(BuildDir)"/>
+  </Target>
+
+  <Target Name="Release" DependsOnTargets="Clean;UpdateVersion;Build;Distrib"/>
+</Project>
