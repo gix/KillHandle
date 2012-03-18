@@ -880,8 +880,9 @@ int wmain(int argc, wchar_t* argv[])
     try {
         DWORD pid = FindProcessByName(processName);
         if (pid == 0) {
+            // Nothing to do
             fwprintf(stderr, L"KillHandle: <%s> process not found.\n", processName.c_str());
-            return 1;
+            return 0;
         }
 
         if (!LoadProcs()) {
